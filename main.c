@@ -7,6 +7,10 @@
 #include <stdbool.h>
 #include <png.h>
 #include <unistd.h>
+#include <time.h>
+#include <X11/extensions/XShm.h>
+#include <sys/shm.h>
+
 
 //Relative position 
 const float relx = 0.284375;
@@ -14,7 +18,7 @@ const float rely = 0.93055555555;
 //For 1080p
 const unsigned long p_values1080[4] = {0x1b2025, 0x30353a, 0x43484e, 0x3f4349};
 //For 1440p
-const unsigned long p_values1440[4] = {0x282d32, 0x373c41, 0x4549f, 0x42464c};
+const unsigned long p_values1440[4] = {0x282d32, 0x383c41, 0x45494f, 0x41464b};
 
 
 static int trapped_error_code = 0;
@@ -115,6 +119,9 @@ int main(int argc, char **argv){
 	int newy;
 	int new_offset = -1;
 	int last_offset = -2;
+	//For benchmarking purposes
+	//clock_t start_time;
+	//double elapsed_time;
 	//Whatever I don't care if X11 complains about something >:)
 	trap_errors();
 
@@ -141,7 +148,11 @@ int main(int argc, char **argv){
     	unsigned char *data ;
     	Window *list;
 	XImage *img;
+	Screen* screen;
+	XShmSegmentInfo shminfo;
+	Status s1;
 	while(1){
+	//	start_time = clock();
 		//Get all the ACTIVE_WINDOWS
 		XGetWindowProperty(display, root, atom, 0L, (~0L), false, AnyPropertyType, &actualType, &format, &numItems, &bytesAfter, &data);	
 
@@ -166,10 +177,26 @@ int main(int argc, char **argv){
 		//Get Window Attributes	
         	XWindowAttributes attributes = {0};
 		XGetWindowAttributes(display, *dota_window, &attributes);
+
+		screen = attributes.screen;
+		//Create the image (empty)
+		img = XShmCreateImage(display, DefaultVisualOfScreen(screen), DefaultDepthOfScreen(screen), ZPixmap, NULL, &shminfo, attributes.width, attributes.height);
+
+		//Configure shm
+	    	shminfo.shmid = shmget(IPC_PRIVATE, img->bytes_per_line * img->height, IPC_CREAT|0777);
+	    	shminfo.shmaddr = img->data = (char*)shmat(shminfo.shmid, 0, 0);
+	    	shminfo.readOnly = False;
+
+		//Attach shm
+		s1 = XShmAttach(display, &shminfo);
+
 		
 		//Get the image from X11
 		//NOTE: DOES NOT WORK ON XWAYLAND
-		img = XGetImage(display, *dota_window, 0,0, attributes.width, attributes.height, AllPlanes, ZPixmap);
+		//img = XGetImage(display, *dota_window, 0,0, attributes.width, attributes.height, AllPlanes, ZPixmap);
+		if(!XShmGetImage(display, *dota_window, img, 0, 0, 0x00ffffff)){
+			printf("Couldn't get an image!\n");
+		}
 
 		//Relative pxiel position
 		newx = (int) (attributes.width*relx);
@@ -199,8 +226,11 @@ int main(int argc, char **argv){
 		}
 		//Free X11 objects
 		XFree(data);
-		//sleep for 100ms
-		usleep(100000);
+		//Benchmark stuff
+		//elapsed_time = (double)(clock() - start_time) / CLOCKS_PER_SEC;		
+		//printf("Done in %f seconds\n", elapsed_time);
+		//sleep for 400ms
+		usleep(400000);
 	}
 	XCloseDisplay(display);
 

@@ -1,6 +1,7 @@
 CC=gcc
-CFLAGS=-g
-LDFLAGS=-lX11 -lpng
+#CFLAGS=-g -Ofast -march=native -mavx2
+CFLAGS=-g -march=native -mavx2
+LDFLAGS=-lX11 -lpng -lXext
 
 level_offset: main.o
 	$(CC) $(LDFLAGS) -o $@ $<
