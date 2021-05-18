@@ -8,10 +8,11 @@
 #include <png.h>
 #include <unistd.h>
 #include <time.h>
-#include <X11/extensions/XShm.h>
-#include <sys/shm.h>
+#include <pthread.h>
+#include <signal.h>
 
-
+//For closing the loop
+static int keepRunning = 1;
 //Relative position 
 const float relx = 0.284375;
 const float rely = 0.93055555555;
@@ -20,6 +21,21 @@ const unsigned long p_values1080[4] = {0x1b2025, 0x30353a, 0x43484e, 0x3f4349};
 //For 1440p
 const unsigned long p_values1440[4] = {0x282d32, 0x383c41, 0x45494f, 0x41464b};
 
+void ctrlCHandler(int){
+	keepRunning = 0;
+}
+
+struct getOffsetArgs{
+	Display *display;
+	Drawable window;
+	int x;
+	int y;
+	int width;
+	int height;
+	unsigned long plane_mask;
+	int format;
+	int ret_offset;
+};
 
 static int trapped_error_code = 0;
 static int (*old_error_handler) (Display *, XErrorEvent *);
@@ -30,41 +46,64 @@ static int error_handler(Display *display, XErrorEvent *error){
 	return 0;
 }
 
-void
-trap_errors(void)
+void trap_errors(void)
 {
     trapped_error_code = 0;
     old_error_handler = XSetErrorHandler(error_handler);
 }
 
-int
-untrap_errors(void)
-{
-    XSetErrorHandler(old_error_handler);
-    return trapped_error_code;
-}
-
 //Returns the offset for the 4 pixels we're searching for, if they're not found returns -1 (we don't expect the HUD to shrink to lesss than 4 abilities)
+//If the offset is negative we're probably looking at a creep, return -2
 int findOffset(XImage *img){
 	int original_x = relx * img->width;
 	int original_y = rely * img->height;
+	int *offset = NULL;
 	int i;
 
 	//Find the 4 pixels within the fixed position
-	for(i = 0; i <= original_x; ++i){
+	for(i = 0; i <= img->width; ++i){
 		if(img->height < 1440){ //1080p
 			if(XGetPixel(img,i,original_y) == p_values1080[0] && XGetPixel(img,i+1,original_y) == p_values1080[1] && XGetPixel(img,i+2,original_y) == p_values1080[2] && XGetPixel(img,i+3,original_y) == p_values1080[3]){
-				return (original_x - i);
+				offset = (int*) malloc(sizeof(int));
+				*offset = original_x - i;
 			}
 		}
 		else{ //1440p
 			if(XGetPixel(img,i,original_y) == p_values1440[0] && XGetPixel(img,i+1,original_y) == p_values1440[1] && XGetPixel(img,i+2,original_y) == p_values1440[2] && XGetPixel(img,i+3,original_y) == p_values1440[3]){
-				return (original_x - i);
+				offset = (int*) malloc(sizeof(int));
+				*offset = original_x - i;
 			}
 		}
 	}
+	if(offset == NULL){
+		return -1;
+	}
+	else if(*offset < 0){
+		return -2;
+	}
+	int ret = *offset;
+	free(offset);
+	return ret;
+}
 
-	return -1;
+void *getOffsetThread(void *arguments){
+	XImage *img;
+	struct getOffsetArgs *args = (struct getOffsetArgs *) arguments;
+
+	img = XGetImage(args->display, args->window, args->x, args->y, args->width, args->height, args->plane_mask, args->format);
+
+	if(!img){
+		printf("Couldn't get an image!\n");
+		args->ret_offset = -1;
+		return 0;
+	}
+
+	args->ret_offset = findOffset(img);
+
+	//Free image
+	if(img){
+		XDestroyImage(img);
+	}
 }
 
 //Return 0: success
@@ -90,8 +129,12 @@ int createMask(int new_offset, int x_offset, int y_offset){
 	}
 	
 	//if new_offset is -1 just use the empty mask	
-	if(new_offset < 0){
+	if(new_offset == -1){
 		sprintf(command,"cp -f empty_mask.png mask.png");
+	}
+	//If new_offset is -2 use game mask
+	else if(new_offset == -2){
+		sprintf(command,"cp -f game_mask.png mask.png");
 	}
 	else{
 		sprintf(command,"convert game_mask.png -draw \'image over %d,%d,0,0 level_mask.png\' mask.png",x_offset - new_offset, y_offset); 
@@ -110,20 +153,26 @@ void handleMaskErrors(int error){
 	return;
 }
 
+
+
 int main(int argc, char **argv){
 	int i,status;
 	Window *dota_window = NULL;
 	char *window_name;
-	unsigned long pixels[4];
+	/*DEBUG:  variables needed to print pixels
+	 unsigned long pixels[4];
 	int newx;
 	int newy;
+	*/
 	int new_offset = -1;
 	int last_offset = -2;
-	//For benchmarking purposes
-	//clock_t start_time;
-	//double elapsed_time;
 	//Whatever I don't care if X11 complains about something >:)
 	trap_errors();
+	//For CTRL-C management
+	struct sigaction act;
+	act.sa_handler = ctrlCHandler;
+	memset(&act, 0, sizeof(act));
+	sigaction(SIGINT, &act, NULL);
 
 
 	//Check for arguments
@@ -147,71 +196,69 @@ int main(int argc, char **argv){
     	unsigned long bytesAfter;
     	unsigned char *data ;
     	Window *list;
-	XImage *img;
-	Screen* screen;
-	XShmSegmentInfo shminfo;
-	Status s1;
-	while(1){
-	//	start_time = clock();
-		//Get all the ACTIVE_WINDOWS
-		XGetWindowProperty(display, root, atom, 0L, (~0L), false, AnyPropertyType, &actualType, &format, &numItems, &bytesAfter, &data);	
+	pthread_t offsetThread;
 
-		//list contains all the Windows
-		list = (Window *) data;
 
-		//Get Dota Window
-		for( i = 0; i < numItems; ++i){
-			status = XFetchName(display, list[i], &window_name);
-			if(status && (strstr(window_name,"Dota 2") != NULL)){
-				dota_window = (list+i);
-			}
-			//Free memory since we don't need it anymore
-			XFree(window_name);
+	//Get all the ACTIVE_WINDOWS
+	XGetWindowProperty(display, root, atom, 0L, (~0L), false, AnyPropertyType, &actualType, &format, &numItems, &bytesAfter, &data);	
+
+	//list contains all the Windows
+	list = (Window *) data;
+
+	//Get Dota Window
+	for( i = 0; i < numItems; ++i){
+		status = XFetchName(display, list[i], &window_name);
+		if(status && (strstr(window_name,"Dota 2") != NULL)){
+			dota_window = (list+i);
 		}
+		//Free memory (window name) since we don't need it anymore
+		XFree(window_name);
+	}
 
-		if(!dota_window){
-			printf("Dota 2 is not running\n");
-			return 1;
-		}
+	if(!dota_window){
+		printf("Dota 2 is not running\n");
+		return 1;
+	}
 
-		//Get Window Attributes	
-        	XWindowAttributes attributes = {0};
-		XGetWindowAttributes(display, *dota_window, &attributes);
+	//Get Window Attributes	
+	XWindowAttributes attributes = {0};
+	XGetWindowAttributes(display, *dota_window, &attributes);
 
-		screen = attributes.screen;
-		//Create the image (empty)
-		img = XShmCreateImage(display, DefaultVisualOfScreen(screen), DefaultDepthOfScreen(screen), ZPixmap, NULL, &shminfo, attributes.width, attributes.height);
+	/*DEBUG: Relative pxiel position
+	newx = (int) (attributes.width*relx);
+	newy = (int) (attributes.height*rely);
+	*/
 
-		//Configure shm
-	    	shminfo.shmid = shmget(IPC_PRIVATE, img->bytes_per_line * img->height, IPC_CREAT|0777);
-	    	shminfo.shmaddr = img->data = (char*)shmat(shminfo.shmid, 0, 0);
-	    	shminfo.readOnly = False;
+	//Populate args for getting the image
+	struct getOffsetArgs args; 
+	args.display = display;
+	args.window = *dota_window;
+	args.x = 0;
+	args.y = 0;
+	args.width = attributes.width;
+	args.height = attributes.height;
+	args.plane_mask = AllPlanes;
+	args.format = ZPixmap;
 
-		//Attach shm
-		s1 = XShmAttach(display, &shminfo);
-
-		
-		//Get the image from X11
-		//NOTE: DOES NOT WORK ON XWAYLAND
-		//img = XGetImage(display, *dota_window, 0,0, attributes.width, attributes.height, AllPlanes, ZPixmap);
-		if(!XShmGetImage(display, *dota_window, img, 0, 0, 0x00ffffff)){
-			printf("Couldn't get an image!\n");
-		}
-
-		//Relative pxiel position
-		newx = (int) (attributes.width*relx);
-		newy = (int) (attributes.height*rely);
-		
+	//Main loop
+	while(keepRunning){
+		/*DEBUG: Print pixels
 		for(i = 0; i < 4; ++i){
 			pixels[i] = XGetPixel(img,newx+i,newy);
 		}
+		printf("Pixel1:%lx Pixel2:%lx Pixel3:%lx Pixel4:%lx\n",pixels[0],pixels[1],pixels[2],pixels[3]);
+		*/
 
+		//Spawn thread
+		if (pthread_create(&offsetThread, NULL, &getOffsetThread, (void *) &args) != 0){
+			printf("Thread creation failed - skipping\n");
+		}
 
-		//Get the new offset
-		//printf("Pixel1:%lx Pixel2:%lx Pixel3:%lx Pixel4:%lx\n",pixels[0],pixels[1],pixels[2],pixels[3]);
-		new_offset = findOffset(img);
-		//printf("OFFSET: %d\n",new_offset);
-
+		
+		//Wait for thread
+		pthread_join(offsetThread, NULL);
+		new_offset = args.ret_offset;
+		
 
 		//Check if the offset changed, if it did create the new mask
 		if(last_offset != new_offset){
@@ -220,18 +267,11 @@ int main(int argc, char **argv){
 			handleMaskErrors(createMask(new_offset,atoi(argv[1]), atoi(argv[2])));
 		}
 
-		//Free image
-		if(img){
-			XDestroyImage(img);
-		}
+		
 		//Free X11 objects
-		XFree(data);
-		//Benchmark stuff
-		//elapsed_time = (double)(clock() - start_time) / CLOCKS_PER_SEC;		
-		//printf("Done in %f seconds\n", elapsed_time);
-		//sleep for 400ms
 		usleep(400000);
 	}
+	XFree(data);
 	XCloseDisplay(display);
 
 	return 0;
