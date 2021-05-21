@@ -21,7 +21,7 @@ const unsigned long p_values1080[4] = {0x1b2025, 0x30353a, 0x43484e, 0x3f4349};
 //For 1440p
 const unsigned long p_values1440[4] = {0x282d32, 0x383c41, 0x45494f, 0x41464b};
 
-void ctrlCHandler(int){
+void ctrlCHandler(){
 	keepRunning = 0;
 }
 
