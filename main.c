@@ -257,7 +257,7 @@ int main(int argc, char **argv){
 			args.ret_offset = -1;
 		}
 
-		args.ret_offset = findOffset(img);
+		new_offset = findOffset(img);
 
 		//Free image
 		if(img){
