@@ -5,7 +5,6 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdbool.h>
-#include <png.h>
 #include <unistd.h>
 #include <time.h>
 #include <pthread.h>
@@ -140,8 +139,7 @@ int createMask(int new_offset, int x_offset, int y_offset){
 		sprintf(command,"convert game_mask.png -draw \'image over %d,%d,0,0 level_mask.png\' mask.png",x_offset - new_offset, y_offset); 
 	}
 	//Run the command
-	system(command);
-	return 0;
+	return system(command);
 }
 
 void handleMaskErrors(int error){
@@ -149,6 +147,8 @@ void handleMaskErrors(int error){
 		case 1: printf("Please provide empty_mask.png\n");break;
 		case 2: printf("Please provide game_mask.png\n");break;
 		case 3: printf("Please provide level_mask.png\n");break;
+		case -1: printf("Imagemagick child could not be created");break;
+		case 127: printf("Can't execute shell in child process");break;
 	}
 	return;
 }
@@ -159,6 +159,7 @@ int main(int argc, char **argv){
 	int i,status;
 	Window *dota_window = NULL;
 	char *window_name;
+	XImage *img;
 	/*DEBUG:  variables needed to print pixels
 	 unsigned long pixels[4];
 	int newx;
@@ -249,16 +250,30 @@ int main(int argc, char **argv){
 		printf("Pixel1:%lx Pixel2:%lx Pixel3:%lx Pixel4:%lx\n",pixels[0],pixels[1],pixels[2],pixels[3]);
 		*/
 
+		img = XGetImage(args.display, args.window, args.x, args.y, args.width, args.height, args.plane_mask, args.format);
+
+		if(!img){
+			printf("Couldn't get an image!\n");
+			args.ret_offset = -1;
+		}
+
+		args.ret_offset = findOffset(img);
+
+		//Free image
+		if(img){
+			XDestroyImage(img);
+		}
+
+
+		/* For Multithreading
 		//Spawn thread
 		if (pthread_create(&offsetThread, NULL, &getOffsetThread, (void *) &args) != 0){
 			printf("Thread creation failed - skipping\n");
 		}
-
-		
 		//Wait for thread
 		pthread_join(offsetThread, NULL);
 		new_offset = args.ret_offset;
-		
+		*/
 
 		//Check if the offset changed, if it did create the new mask
 		if(last_offset != new_offset){
