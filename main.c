@@ -137,7 +137,7 @@ int createMask(int new_offset, int x_offset, int y_offset){
 		sprintf(command,"cp -f game_mask.png mask.png");
 	}
 	else{
-		sprintf(command,"convert game_mask.png -draw \'image over %d,%d,0,0 level_mask.png\' mask.png",x_offset - new_offset, y_offset); 
+		sprintf(command,"convert game_mask.png -define profile:skip=ICC -draw \'image over %d,%d,0,0 level_mask.png\' mask.png",x_offset - new_offset, y_offset); 
 	}
 	//Run the command
 	return system(command);
@@ -258,10 +258,10 @@ int main(int argc, char **argv){
 			args.ret_offset = -1;
 		}
 
-		new_offset = findOffset(img);
 
 		//Free image
 		if(img){
+			new_offset = findOffset(img);
 			XDestroyImage(img);
 		}
 
