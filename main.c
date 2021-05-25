@@ -126,6 +126,7 @@ int createMask(int new_offset, int x_offset, int y_offset){
 	if(!(f = fopen(level_mask,"r"))){
 		return 3;
 	}
+	fclose(f);
 	
 	//if new_offset is -1 just use the empty mask	
 	if(new_offset == -1){
