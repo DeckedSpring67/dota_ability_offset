@@ -115,19 +115,23 @@ int createMask(int new_offset, int x_offset, int y_offset){
 	char *level_mask = "level_mask.png";
 	char command[1000];
 	FILE *f;
-	int retval;
+	int retval = 0;
 
 	//Check if we have the needed files
 	if(!(f = fopen(e_mask,"r"))){
-		return 1;
+		retval = 1;
 	}
 	if(!(f = fopen(game_mask,"r"))){
-		return 2;
+		retval = 2;
 	}
 	if(!(f = fopen(level_mask,"r"))){
-		return 3;
+		retval = 3;
 	}
 	fclose(f);
+
+	if(retval != 0){
+		return retval;
+	}
 	
 	//if new_offset is -1 just use the empty mask	
 	if(new_offset == -1){
