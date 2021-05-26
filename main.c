@@ -115,6 +115,7 @@ int createMask(int new_offset, int x_offset, int y_offset){
 	char *level_mask = "level_mask.png";
 	char command[1000];
 	FILE *f;
+	int retval;
 
 	//Check if we have the needed files
 	if(!(f = fopen(e_mask,"r"))){
@@ -140,7 +141,10 @@ int createMask(int new_offset, int x_offset, int y_offset){
 		sprintf(command,"convert game_mask.png -define profile:skip=ICC -draw \'image over %d,%d,0,0 level_mask.png\' mask.png",x_offset - new_offset, y_offset); 
 	}
 	//Run the command
-	return system(command);
+	retval = system(command);
+	if(retval == 127)
+		return retval;
+	return 0;
 }
 
 void handleMaskErrors(int error){
@@ -148,7 +152,6 @@ void handleMaskErrors(int error){
 		case 1: printf("Please provide empty_mask.png\n");break;
 		case 2: printf("Please provide game_mask.png\n");break;
 		case 3: printf("Please provide level_mask.png\n");break;
-		case -1: printf("Imagemagick child could not be created");break;
 		case 127: printf("Can't execute shell in child process");break;
 	}
 	return;
@@ -175,6 +178,8 @@ int main(int argc, char **argv){
 	act.sa_handler = ctrlCHandler;
 	memset(&act, 0, sizeof(act));
 	sigaction(SIGINT, &act, NULL);
+	int arg1 = atoi(argv[1]);
+	int arg2 = atoi(argv[2]);
 
 
 	//Check for arguments
@@ -280,7 +285,7 @@ int main(int argc, char **argv){
 		if(last_offset != new_offset){
 			printf("OFFSET:%d\n",new_offset);
 			last_offset = new_offset;
-			handleMaskErrors(createMask(new_offset,atoi(argv[1]), atoi(argv[2])));
+			handleMaskErrors(createMask(new_offset, arg1, arg2));
 		}
 
 		
